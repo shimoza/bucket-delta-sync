@@ -93,6 +93,9 @@ Enable the hook once after cloning:
 git config core.hooksPath .githooks
 ```
 
+Full credential setup (OBS AK/SK, Azure account key vs SAS, least-privilege
+scoping, systemd/cron deployment) is in [docs/CREDENTIALS.md](docs/CREDENTIALS.md).
+
 ## Configuration
 
 All settings live in `config.toml`. Secrets are referenced by environment

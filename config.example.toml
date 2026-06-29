@@ -9,8 +9,12 @@
 type = "azure_blob"
 account = "myaccount"
 container = "mycontainer"
-# Name of the env var that holds the secret. Not the secret itself.
+# Credential: name of the env var that holds the secret, NOT the secret itself.
+# Use ONE of:
+#   key_env  -> a storage account key (account-wide)
+#   sas_env  -> a container-scoped SAS token, read+list (recommended). See docs/CREDENTIALS.md
 key_env = "SRC_AZURE_ACCOUNT_KEY"
+# sas_env = "SRC_AZURE_SAS"
 # Optional prefix to limit the sync to one path.
 prefix = ""
 
