@@ -1,0 +1,40 @@
+# --- Secrets and local config (never commit) ---
+.env
+.env.*
+!.env.example
+config.toml
+config.local.*
+*.local.toml
+credentials*
+secrets*
+rclone.conf
+*.pem
+*.key
+*.p12
+*.pfx
+azure.json
+sas.txt
+
+# --- Sync state and data (may embed object keys / customer paths) ---
+*.checkpoint
+*.tsv
+*.state
+state/
+.cache/
+*.log
+logs/
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# --- OS / editor ---
+.DS_Store
+*.swp
+.idea/
+.vscode/
