@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Block commits that contain key-shaped strings.
+# Enable once per clone:  git config core.hooksPath .githooks
+set -euo pipefail
+DIR="$(git rev-parse --show-toplevel)"
+exec "$DIR/scripts/check-secrets.sh" staged

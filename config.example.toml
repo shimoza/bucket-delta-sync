@@ -1,0 +1,40 @@
+# bucket-delta-sync example configuration
+#
+# Copy this file to config.toml (gitignored) and edit.
+# Secrets are referenced by ENVIRONMENT VARIABLE NAME, never written here.
+# Set the actual values in your shell or in a gitignored .env file.
+
+[source]
+# Source object store. First supported type: "azure_blob".
+type = "azure_blob"
+account = "myaccount"
+container = "mycontainer"
+# Name of the env var that holds the secret. Not the secret itself.
+key_env = "SRC_AZURE_ACCOUNT_KEY"
+# Optional prefix to limit the sync to one path.
+prefix = ""
+
+[dest]
+# Destination object store. S3-compatible, including TCP OBS.
+type = "s3"
+endpoint = "https://obs.eu-de.otc.t-systems.com"
+region = "eu-de"
+bucket = "my-dest-bucket"
+# For the S3-compatible provider in rclone-based setups, set provider = "HuaweiOBS".
+provider = "HuaweiOBS"
+access_key_env = "DST_S3_ACCESS_KEY"
+secret_key_env = "DST_S3_SECRET_KEY"
+
+[sync]
+# Compare objects by key and size. ETag is not reliable across providers or
+# after server-side re-encryption. See docs/ARCHITECTURE.md.
+compare = "key_size"
+# Propagate deletes so the destination mirrors the source.
+delete = true
+# Safety cap. Abort the run if it would delete more than this many objects.
+# Use a number, or a percentage like "5%".
+max_delete = "1%"
+# Worker threads for parallel transfer.
+threads = 16
+# Always preview first. Set to false to actually write.
+dry_run = true
