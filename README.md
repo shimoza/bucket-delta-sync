@@ -11,10 +11,12 @@ small backend interface, so other pairs can be added later.
 
 ## Status
 
-Early scaffold. The transfer engine is not selected yet. The repository ships
-the credential-safe foundation, the configuration model, and the design notes.
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the open engine decision and
-the trade-offs behind it.
+Working. The engine is a custom Python tool over the cloud SDKs (boto3 for the
+S3/OBS side, azure-storage-blob for the Azure side). The diff, copy, delete,
+delete-cap and resume paths are live-tested against TCP OBS. The Azure source
+adapter is implemented and unit-covered but still needs a live run against a
+real Azure account. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
+engine decision and the design notes.
 
 ## What it does
 
@@ -35,14 +37,45 @@ the trade-offs behind it.
 ## Quick start
 
 ```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+
 cp config.example.toml config.toml      # config.toml is gitignored
 cp .env.example .env                     # .env is gitignored, holds secrets
 # edit .env with your real keys, then load it into the shell:
 set -a; . ./.env; set +a
 
-# preview only, no writes:
-# (engine command lands here once the engine is selected)
+# preview only, no writes (dry-run is the default):
+python -m bucketsync --config config.toml
+
+# perform the sync (copies and deletes, guarded by the delete cap):
+python -m bucketsync --config config.toml --apply
 ```
+
+The config selects the source and destination by `type`. Supported today:
+`azure_blob` and `s3` (any S3-compatible store, including OBS) as source or
+destination where it makes sense, plus `local_dir` for tests and demos. The
+first target pair is `azure_blob` -> `s3`.
+
+## Important: SDK checksum compatibility
+
+Recent AWS SDKs (Go v2 `service/s3` >= v1.73.0, boto3 >= 1.36) send a default
+CRC32 checksum in an `aws-chunked` body that OBS and some other S3-compatible
+stores persist into the object, silently corrupting every upload. This tool
+disables that behaviour, but **any other code your team points at OBS (a Go
+backend, scripts) will hit it too.** See
+[docs/CHECKSUM-COMPATIBILITY.md](docs/CHECKSUM-COMPATIBILITY.md) for the symptom
+and the one-line fix.
+
+## How it works
+
+1. Stream both listings (sorted by key) and diff them by key and size in O(1)
+   memory: source-only keys are copied, destination-only keys are deleted,
+   size changes are recopied.
+2. Check the delete cap. If the run would delete more than `max_delete`, it
+   aborts before touching anything.
+3. Dry-run prints the plan and stops. `--apply` runs the copy phase (threaded,
+   resumable, Archive-tier blobs rehydrated first) then the delete phase.
 
 ## Security model
 

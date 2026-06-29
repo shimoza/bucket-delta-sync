@@ -9,16 +9,18 @@ MODE="${1:-staged}"
 # Files we never flag (templates carry placeholders on purpose).
 EXCLUDE_RE='(\.env\.example|config\.example\.toml|check-secrets\.sh|SECURITY\.md)$'
 
-# Patterns that look like real secrets.
+# Patterns that look like real secrets, one per line. In order:
+# AWS access key id, AWS secret, Azure connection-string key, Azure account-key
+# shape, SAS signature, GitHub token, PEM private key, obsutil inline ak+sk.
 declare -a PATTERNS=(
-  'AKIA[0-9A-Z]{16}'                         # AWS access key id
+  'AKIA[0-9A-Z]{16}'
   'aws_secret_access_key[[:space:]]*=[[:space:]]*[A-Za-z0-9/+]{30,}'
-  'AccountKey=[A-Za-z0-9/+]{60,}=='          # Azure connection string key
-  '[A-Za-z0-9/+]{86,88}==' \                 # Azure account key shape
-  'sig=[A-Za-z0-9%]{40,}'                    # SAS signature
-  'ghp_[A-Za-z0-9]{36}'                      # GitHub token
-  'BEGIN[[:space:]]+[A-Z ]*PRIVATE KEY'      # PEM private key
-  '-i=[A-Za-z0-9]{20}[[:space:]]+-k='        # obsutil inline ak/sk
+  'AccountKey=[A-Za-z0-9/+]{60,}=='
+  '[A-Za-z0-9/+]{86,88}=='
+  'sig=[A-Za-z0-9%]{40,}'
+  'ghp_[A-Za-z0-9]{36}'
+  'BEGIN[[:space:]]+[A-Z ]*PRIVATE KEY'
+  '-i=[A-Za-z0-9]{20}[[:space:]]+-k='
 )
 
 if [ "$MODE" = "--all" ]; then

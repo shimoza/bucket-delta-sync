@@ -126,21 +126,50 @@ So the realistic choice narrows to rclone or a custom tool.
   any per-object step. The cost is owning the retry, throttling, and multipart
   logic that rclone already hardened.
 
-## Open decision
+## Decision: custom tool on the cloud SDKs
 
-The engine is not selected. The decision waits on one fact, the source tier mix,
-and on confirming whether an event-driven feed is wanted for near-real-time
-behaviour. Three shapes are on the table:
+The engine is a custom Python tool (option 2), not an rclone wrapper. Reasons:
 
-1. Thin wrapper over rclone. A small command-line tool that loads credentials
-   safely, pins the destination-safe flags, runs a dry-run verify, and optionally
-   pre-rehydrates archive objects. Least code, native deletes, clean credentials.
-2. Custom tool on the cloud SDKs. A sorted-merge diff with copy and delete, own
-   checkpoint and rehydration. Most control, most code to maintain.
-3. rclone plus a runbook. No custom code, a documented config and command set.
-   Smallest deliverable, discipline rests on the operator.
+- It owns the diff, the resume checkpoint, the delete cap, and the archive
+  rehydration outright, so the safety behaviour is in our code and testable, not
+  spread across rclone flags.
+- It does not depend on rclone reading Archive-tier source blobs, which rclone
+  cannot do (409, no auto-rehydrate). The custom adapter rehydrates first.
+- The diff and copy/delete engine is generalized behind a small adapter
+  interface, so the source can be Azure Blob, an S3 store, or a local directory,
+  and new pairs are one adapter each. The Azure source adapter is the only
+  genuinely new piece versus the prior OBS-to-OBS tool.
 
-This document is updated when the decision lands.
+rclone stays the documented fallback for an all-Hot source where minimal
+maintenance matters more than control. The trade-off (rclone hardened multipart
+and retry vs our own) is real, so the code reuses the proven retry, multipart,
+checkpoint and progress patterns from the earlier OBS sync rather than inventing
+them.
+
+### Implementation map
+
+| Concern | Where |
+|---|---|
+| Sorted-merge true-diff (key + size, streaming) | `bucketsync/diff.py` |
+| Orchestration: plan, cap, dry-run, copy, delete | `bucketsync/engine.py` |
+| Azure Blob source (list, stream, rehydrate) | `bucketsync/adapters/azure_blob.py` |
+| S3 / OBS store (list, write, batch delete) | `bucketsync/adapters/s3_store.py` |
+| Local dir (tests, demos, second pair) | `bucketsync/adapters/local_dir.py` |
+| Resume checkpoint (key+size hash) | `bucketsync/checkpoint.py` |
+| Config + env-var secret resolution | `bucketsync/config.py` |
+| CLI (dry-run default, --apply to write) | `bucketsync/cli.py` |
+
+### Verification status
+
+Live-tested against TCP OBS (eu-de): diff, dry-run, apply (copy), delete
+propagation, checkpoint resume, and the delete-cap abort all confirmed on a
+throwaway bucket. The diff and full engine path are covered by offline tests
+(`tests/`). The Azure source adapter is written to the azure-storage-blob 12.x
+API but not yet run against a live Azure account (no Azure credentials in the
+build environment). Verify it against a small container, and confirm the source
+tier mix, before a full production run.
+
+This document is updated as the tool evolves.
 
 ## Sources
 
