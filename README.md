@@ -34,6 +34,13 @@ engine decision and the design notes.
   want a recovery window.
 - It does not move credentials on the command line. See the security model below.
 
+## Deploying it
+
+To run the mirror yourself on a host between the two clouds (recommended: a TCP
+ECS next to the destination bucket), follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md),
+the full runbook covering the host, network, install, config, scheduling, and a
+pre-flight checklist. Credentials are in [docs/CREDENTIALS.md](docs/CREDENTIALS.md).
+
 ## Quick start
 
 ```bash
