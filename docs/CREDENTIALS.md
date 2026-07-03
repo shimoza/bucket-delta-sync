@@ -94,9 +94,12 @@ Use Option B for production: least privilege, scoped to one container, revocable
 
 ### Archive tier note
 
-If the source has **Archive-tier** blobs and you want the tool to rehydrate them
-before copying, the Azure credential also needs **write / set-tier** permission
-(add `w` to the SAS permissions, `rlw`). If the source is all Hot, `rl` is enough.
+By default (`rehydrate = false`) the tool never writes to the source, so
+**read + list (`rl`) is always sufficient** — Archive-tier blobs are skipped and
+reported. Only if you explicitly set `rehydrate = true` (which permanently
+re-tiers Archive blobs to Hot on the source, with billing impact) does the SAS
+need set-tier permission (`rlw`). Prefer the read-only SAS: it makes source
+mutation impossible at the credential level, regardless of any software bug.
 
 ## Deploying the variables on a host
 

@@ -13,9 +13,11 @@ small backend interface, so other pairs can be added later.
 
 Working. The engine is a custom Python tool over the cloud SDKs (boto3 for the
 S3/OBS side, azure-storage-blob for the Azure side). The diff, copy, delete,
-delete-cap and resume paths are live-tested against TCP OBS. The Azure source
-adapter is implemented and unit-covered but still needs a live run against a
-real Azure account. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
+delete-cap and resume paths are live-tested against TCP OBS. The source is
+opened read-only: with the default configuration the tool performs zero
+mutating calls against the source store (see the safety section below). The Azure
+source adapter is live-verified against a real Azure account (byte-identical
+copies, MD5-checked). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
 engine decision and the design notes.
 
 ## What it does
@@ -82,7 +84,21 @@ and the one-line fix.
 2. Check the delete cap. If the run would delete more than `max_delete`, it
    aborts before touching anything.
 3. Dry-run prints the plan and stops. `--apply` runs the copy phase (threaded,
-   resumable, Archive-tier blobs rehydrated first) then the delete phase.
+   with per-object Content-Type carried across) then the delete phase.
+   Resume is structural: a re-run re-diffs, and everything already copied is
+   excluded automatically — the diff is the checkpoint.
+
+## Source safety
+
+- The engine wraps the source adapter in a read-only proxy; write/delete calls
+  against the source cannot even be expressed. A dedicated tripwire test runs a
+  full mirror and asserts zero mutating calls reach the source.
+- The single opt-in exception is `rehydrate = true` (Azure Archive thawing,
+  which permanently re-tiers source blobs). Default is `false`: archive blobs
+  are skipped and reported, the source stays untouched, and a read+list SAS is
+  all the tool needs.
+- Deletes on the destination are capped (`max_delete`) and the source/dest
+  prefixes must match when deletes are on, so a scoping mistake cannot mass-delete.
 
 ## Security model
 

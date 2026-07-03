@@ -29,12 +29,12 @@ or memory hungry.
 |---|---|---|
 | Flavor | `s3.xlarge.2` (4 vCPU / 8 GB) | general purpose; `c7.xlarge.2` if you prefer compute-optimized |
 | RAM | 8 GB | the diff streams, so 6.2M objects do not go into memory |
-| System disk | 40 GB | holds the plan + checkpoint files, **not** the data |
+| System disk | 40 GB | holds the plan files and run lock, **not** the data |
 | OS | Linux, Python 3.11+ | tested on 3.12 |
 
-For a one-shot **full** copy through the tool (not just deltas), pick a 16 GB
-flavor (`s3.xlarge.4`) for checkpoint headroom. For the recurring delta mirror,
-8 GB is comfortable.
+Memory stays flat regardless of object count (the diff streams and there is no
+in-RAM checkpoint), so 8 GB covers both the recurring mirror and a full seed
+through the tool.
 
 **It does NOT need** a big-RAM box or terabytes of disk. The tool never stages
 data on local disk, it streams source-to-destination. Disk only holds the
@@ -118,7 +118,8 @@ python -m bucketsync --config config.toml --apply   # perform the sync
 ```
 
 Run inside `tmux` or `screen`, a full pass over millions of objects is long. If
-interrupted, just re-run, it resumes from the checkpoint.
+interrupted, just re-run: the diff re-derives what is still missing, so a
+re-run continues exactly where the previous one stopped.
 
 ## 7. Schedule the recurring mirror
 
@@ -155,7 +156,16 @@ sudo systemctl enable --now bucket-delta-sync.timer
   source-side listing glitch can never wipe the destination. Keep it low.
 - **OBS versioning** on the destination bucket is the recommended backstop. It
   does not stop a delete, it keeps the previous bytes recoverable.
-- **Resume.** The copy phase checkpoints; a re-run skips what already copied.
+- **Resume.** A re-run re-diffs; everything already copied is excluded
+  automatically. There is no state to manage.
+- **Run lock.** Overlapping runs against the same state dir are refused (exit
+  code 5), so a slow pass and the next timer tick cannot collide.
+- **Exit codes for monitoring.** 0 clean, 2 config error, 3 delete-cap abort,
+  4 completed with failures, 5 lock held. Alert on anything non-zero from the
+  systemd unit; a month-long unattended mirror must not rot silently.
+- **Source is never written.** Default config performs zero mutating calls
+  against the source; keep `rehydrate = false` unless you explicitly need
+  Azure Archive thawing (a permanent source tier change).
 - **Tune `threads`** to the EIP bandwidth.
 - **Checksum compatibility.** The tool already disables the AWS-SDK default
   checksum that corrupts OBS uploads. If you point any *other* code at OBS, read
@@ -164,15 +174,21 @@ sudo systemctl enable --now bucket-delta-sync.timer
 ## 9. What sizes the runtime
 
 The binding cost of each pass is **listing both sides**, not the byte transfer.
-At a few thousand keys per second a full pass spends minutes to tens of minutes
-listing before it copies the delta. That sets how often you can usefully run it.
+Measured: ~1,300 items/s per side (Azure SDK parse bound), with the two
+listings running concurrently, at flat ~165 MB memory. At millions of objects
+a pass spends on the order of an hour listing (roughly 80-90 minutes at 6M)
+before it copies the delta. That sets how often you can usefully run it -
+plan the mirror schedule around one pass every 2-3 hours at that scale.
 Near-real-time later means event-driven detection (source change feed) instead
 of re-listing, which this tool can grow into.
 
 ## 10. Archive tier
 
 If the source has Archive-tier objects and you want them rehydrated before copy,
-the source credential needs set-tier permission (add `w` to the SAS). If the
+you must set `rehydrate = true` in the config (default false; it permanently
+re-tiers source blobs) and the source credential needs set-tier permission
+(add `w` to the SAS). With the default, archive objects are skipped and
+reported and the source is untouched. If the
 source is all hot, ignore this.
 
 ## Pre-flight checklist

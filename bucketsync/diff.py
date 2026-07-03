@@ -47,7 +47,7 @@ def diff(source: Iterable[ObjectInfo],
 
     while s is not None or d is not None:
         if s is not None and (d is None or s.key < d.key):
-            yield DiffAction(COPY, s.key, s.size, s.tier)
+            yield DiffAction(COPY, s.key, s.size, s.tier, s.content_type)
             s = next(src, None)
         elif d is not None and (s is None or d.key < s.key):
             yield DiffAction(DELETE, d.key, d.size)
@@ -55,6 +55,6 @@ def diff(source: Iterable[ObjectInfo],
         else:
             # same key on both sides
             if s.size != d.size:
-                yield DiffAction(COPY, s.key, s.size, s.tier)
+                yield DiffAction(COPY, s.key, s.size, s.tier, s.content_type)
             s = next(src, None)
             d = next(dst, None)

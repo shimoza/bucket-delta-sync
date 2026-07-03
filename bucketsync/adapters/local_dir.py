@@ -10,9 +10,10 @@ objects the cloud adapters stream. Use it for tests and small trees.
 
 from __future__ import annotations
 
+import mimetypes
 import os
 import shutil
-from typing import BinaryIO, Iterable, Iterator
+from typing import BinaryIO, Iterable, Iterator, Optional
 
 from ..models import ObjectInfo
 from .base import DestAdapter, SourceAdapter
@@ -26,9 +27,19 @@ def _walk_sorted(root: str, prefix: str) -> Iterator[ObjectInfo]:
             key = os.path.relpath(full, root).replace(os.sep, "/")
             if prefix and not key.startswith(prefix):
                 continue
-            items.append(ObjectInfo(key, os.path.getsize(full), None))
+            ct = mimetypes.guess_type(name)[0]
+            items.append(ObjectInfo(key, os.path.getsize(full), None, ct))
     items.sort(key=lambda o: o.key)
     yield from items
+
+
+def _safe_join(root: str, key: str) -> str:
+    """Join a key onto the root, refusing paths that escape it."""
+    path = os.path.realpath(os.path.join(root, key))
+    base = os.path.realpath(root)
+    if path != base and not path.startswith(base + os.sep):
+        raise ValueError(f"key escapes the destination root: {key!r}")
+    return path
 
 
 class LocalDirSource(SourceAdapter):
@@ -53,16 +64,20 @@ class LocalDirDest(DestAdapter):
             return
         yield from _walk_sorted(self.root, self.prefix)
 
-    def put_object(self, key: str, stream: BinaryIO, size: int) -> None:
-        dest = os.path.join(self.root, key)
+    def put_object(self, key: str, stream: BinaryIO, size: int,
+                   content_type: Optional[str] = None) -> None:
+        dest = _safe_join(self.root, key)
         os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
         with open(dest, "wb") as f:
             shutil.copyfileobj(stream, f)
 
-    def delete_keys(self, keys: Iterable[str]) -> None:
+    def delete_keys(self, keys: Iterable[str]) -> list[tuple[str, str]]:
+        failures: list[tuple[str, str]] = []
         for k in keys:
-            path = os.path.join(self.root, k)
             try:
-                os.remove(path)
+                os.remove(_safe_join(self.root, k))
             except FileNotFoundError:
                 pass
+            except (OSError, ValueError) as e:
+                failures.append((k, str(e)))
+        return failures

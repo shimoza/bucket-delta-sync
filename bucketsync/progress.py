@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
+
+# SDK exceptions can embed full request URLs, including SAS signatures or
+# presigned-URL credentials. Failure lines go to operator logs, so scrub any
+# signature-shaped query parameter before recording.
+_SECRET_QS = re.compile(r"((?:sig|Signature|X-Amz-Signature|AccessKeyId|"
+                        r"X-Amz-Credential)=)[^&\s\"']+", re.IGNORECASE)
+
+
+def redact(text: str) -> str:
+    return _SECRET_QS.sub(r"\1REDACTED", text)
 
 
 def human_size(b: float) -> str:
@@ -50,7 +61,7 @@ class Progress:
         with self._lock:
             self.failed += 1
             if len(self.failures) < 100:
-                self.failures.append((key, error))
+                self.failures.append((key, redact(error)))
             self._maybe_report()
 
     def record_skip(self, size: int = 0) -> None:

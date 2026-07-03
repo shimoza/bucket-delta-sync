@@ -10,13 +10,18 @@ class ObjectInfo(NamedTuple):
 
     ``key`` is the full object key (Azure blob name, S3 key). ``size`` is the
     byte length. ``tier`` is the storage/access tier when the backend exposes it
-    ("Hot", "Cool", "Cold", "Archive", or None when unknown). Only ``key`` and
-    ``size`` take part in the diff; ``tier`` drives the rehydrate-before-copy step.
+    ("Hot", "Cool", "Archive", S3 storage classes, or None when unknown).
+    ``content_type`` is the stored MIME type when the listing provides it
+    (Azure does, for free); it is carried to the destination on copy so media
+    served straight from storage keeps rendering after a migration.
+
+    Only ``key`` and ``size`` take part in the diff.
     """
 
     key: str
     size: int
     tier: Optional[str] = None
+    content_type: Optional[str] = None
 
 
 # Diff actions. The diff is a stream of these, never a full in-memory list.
@@ -25,7 +30,8 @@ DELETE = "delete"  # object exists only in destination -> remove it
 
 
 class DiffAction(NamedTuple):
-    op: str               # COPY or DELETE
+    op: str                              # COPY or DELETE
     key: str
-    size: int = 0         # source size for COPY, destination size for DELETE
+    size: int = 0                        # source size for COPY, dest size for DELETE
     tier: Optional[str] = None
+    content_type: Optional[str] = None
