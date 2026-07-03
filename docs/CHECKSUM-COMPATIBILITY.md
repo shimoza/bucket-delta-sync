@@ -117,6 +117,8 @@ assert len(src) == len(dst) and md5(src) == md5(dst)
 ## Notes
 
 - Pinning an older SDK (Go `service/s3` <= v1.72.x, boto3 <= 1.35.x) also avoids
+  it for OTHER tools; this tool itself requires boto3 >= 1.36 because it sets the
+  `when_required` options in code. Pinning older also avoids
   it, but disabling the checksum is the cleaner long-term fix.
 - `skip_s3_checksum`-style flags that only suppress the checksum *header* are not
   enough on their own. The body still gets wrapped in `aws-chunked`. Use the

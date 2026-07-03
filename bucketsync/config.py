@@ -11,7 +11,6 @@ from __future__ import annotations
 import os
 import tomllib
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 class ConfigError(Exception):
@@ -38,6 +37,11 @@ class SyncConfig:
     threads: int = 16
     dry_run: bool = True
     state_dir: str = ".state"
+    # Rehydrate Archive-tier source blobs before copying. OFF by default because
+    # rehydration is a WRITE to the source (a permanent tier change in Azure).
+    # With the default False, the tool performs zero mutating calls against the
+    # source, and a read+list credential is fully sufficient.
+    rehydrate: bool = False
 
 
 @dataclass
@@ -47,13 +51,84 @@ class Config:
     sync: SyncConfig
 
 
-def _require(d: dict, key: str, where: str) -> object:
-    if key not in d:
-        raise ConfigError(f"missing '{key}' in [{where}]")
-    return d[key]
+def require_opt(opts: dict, key: str, where: str):
+    """Fetch a required adapter option, failing with a friendly ConfigError."""
+    if key not in opts or opts[key] in (None, ""):
+        raise ConfigError(f"missing '{key}' in [{where}] section of the config")
+    return opts[key]
 
 
-def _resolve_secret(env_name: str, label: str) -> str:
+def _validate(cfg: Config) -> None:
+    if cfg.sync.compare != "key_size":
+        raise ConfigError(
+            f"unsupported compare mode '{cfg.sync.compare}'. Only 'key_size' is "
+            f"implemented (ETag and modtime are unreliable cross-cloud)."
+        )
+
+    # A true mirror diffs FULL key listings of both sides. If the two sides are
+    # scoped to different prefixes, everything outside the source's prefix looks
+    # like an orphan on the destination and would be DELETED. Refuse the foot-gun.
+    src_prefix = cfg.source.options.get("prefix", "") or ""
+    dst_prefix = cfg.dest.options.get("prefix", "") or ""
+    if cfg.sync.delete and src_prefix != dst_prefix:
+        raise ConfigError(
+            f"source prefix ({src_prefix!r}) and dest prefix ({dst_prefix!r}) "
+            f"differ while delete=true. A mismatched scope would classify "
+            f"everything outside the source prefix as orphans and delete it "
+            f"from the destination. Use identical prefixes, or delete=false."
+        )
+
+    # Mirroring a bucket onto itself would diff a listing against itself and,
+    # worse, interleave reads and writes on the same keys. Refuse.
+    if cfg.source.type == "s3" and cfg.dest.type == "s3":
+        same_endpoint = (cfg.source.options.get("endpoint") ==
+                         cfg.dest.options.get("endpoint"))
+        same_bucket = (cfg.source.options.get("bucket") ==
+                       cfg.dest.options.get("bucket"))
+        if same_endpoint and same_bucket:
+            raise ConfigError(
+                "source and destination are the same bucket on the same "
+                "endpoint. Refusing to mirror a bucket onto itself."
+            )
+    if cfg.source.type == "local_dir" and cfg.dest.type == "local_dir":
+        if os.path.realpath(str(cfg.source.options.get("path", ""))) == \
+           os.path.realpath(str(cfg.dest.options.get("path", "-"))):
+            raise ConfigError("source and destination are the same directory.")
+
+
+def load_config(path: str) -> Config:
+    with open(path, "rb") as f:
+        raw = tomllib.load(f)
+
+    src = raw.get("source", {})
+    dst = raw.get("dest", {})
+    syn = raw.get("sync", {})
+
+    if "type" not in src:
+        raise ConfigError("missing 'type' in [source]")
+    if "type" not in dst:
+        raise ConfigError("missing 'type' in [dest]")
+
+    source = SourceConfig(type=str(src["type"]),
+                          options={k: v for k, v in src.items() if k != "type"})
+    dest = DestConfig(type=str(dst["type"]),
+                      options={k: v for k, v in dst.items() if k != "type"})
+    sync = SyncConfig(
+        compare=str(syn.get("compare", "key_size")),
+        delete=bool(syn.get("delete", True)),
+        max_delete=str(syn.get("max_delete", "1%")),
+        threads=int(syn.get("threads", 16)),
+        dry_run=bool(syn.get("dry_run", True)),
+        state_dir=str(syn.get("state_dir", ".state")),
+        rehydrate=bool(syn.get("rehydrate", False)),
+    )
+
+    cfg = Config(source=source, dest=dest, sync=sync)
+    _validate(cfg)
+    return cfg
+
+
+def resolve_secret(env_name: str, label: str) -> str:
     """Read a secret from the environment by variable name.
 
     The config gives us the NAME of the env var, never the value. We refuse to
@@ -69,40 +144,6 @@ def _resolve_secret(env_name: str, label: str) -> str:
             f"Set it in your shell or a gitignored .env, never in the config file."
         )
     return val
-
-
-def load_config(path: str) -> Config:
-    with open(path, "rb") as f:
-        raw = tomllib.load(f)
-
-    src = raw.get("source", {})
-    dst = raw.get("dest", {})
-    syn = raw.get("sync", {})
-
-    source = SourceConfig(type=str(_require(src, "type", "source")),
-                          options={k: v for k, v in src.items() if k != "type"})
-    dest = DestConfig(type=str(_require(dst, "type", "dest")),
-                      options={k: v for k, v in dst.items() if k != "type"})
-    sync = SyncConfig(
-        compare=str(syn.get("compare", "key_size")),
-        delete=bool(syn.get("delete", True)),
-        max_delete=str(syn.get("max_delete", "1%")),
-        threads=int(syn.get("threads", 16)),
-        dry_run=bool(syn.get("dry_run", True)),
-        state_dir=str(syn.get("state_dir", ".state")),
-    )
-
-    if sync.compare != "key_size":
-        raise ConfigError(
-            f"unsupported compare mode '{sync.compare}'. Only 'key_size' is "
-            f"implemented (ETag and modtime are unreliable cross-cloud)."
-        )
-    return Config(source=source, dest=dest, sync=sync)
-
-
-def resolve_secret(env_name: str, label: str) -> str:
-    """Public wrapper so adapters resolve their own secrets the same safe way."""
-    return _resolve_secret(env_name, label)
 
 
 def parse_max_delete(spec: str, dest_count: int) -> int:

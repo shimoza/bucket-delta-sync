@@ -18,6 +18,8 @@ sas.txt
 # --- Sync state and data (may embed object keys / customer paths) ---
 *.checkpoint
 *.tsv
+*.plan
+.state/
 *.state
 state/
 .cache/

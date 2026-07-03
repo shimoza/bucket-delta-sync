@@ -130,7 +130,7 @@ So the realistic choice narrows to rclone or a custom tool.
 
 The engine is a custom Python tool (option 2), not an rclone wrapper. Reasons:
 
-- It owns the diff, the resume checkpoint, the delete cap, and the archive
+- It owns the diff, the resume semantics, the delete cap, and the archive
   rehydration outright, so the safety behaviour is in our code and testable, not
   spread across rclone flags.
 - It does not depend on rclone reading Archive-tier source blobs, which rclone
@@ -142,8 +142,8 @@ The engine is a custom Python tool (option 2), not an rclone wrapper. Reasons:
 
 rclone stays the documented fallback for an all-Hot source where minimal
 maintenance matters more than control. The trade-off (rclone hardened multipart
-and retry vs our own) is real, so the code reuses the proven retry, multipart,
-checkpoint and progress patterns from the earlier OBS sync rather than inventing
+and retry vs our own) is real, so the code reuses the proven retry, multipart
+and progress patterns from the earlier OBS sync rather than inventing
 them.
 
 ### Implementation map
@@ -155,14 +155,14 @@ them.
 | Azure Blob source (list, stream, rehydrate) | `bucketsync/adapters/azure_blob.py` |
 | S3 / OBS store (list, write, batch delete) | `bucketsync/adapters/s3_store.py` |
 | Local dir (tests, demos, second pair) | `bucketsync/adapters/local_dir.py` |
-| Resume checkpoint (key+size hash) | `bucketsync/checkpoint.py` |
+| Read-only source proxy + run lock | `bucketsync/engine.py` |
 | Config + env-var secret resolution | `bucketsync/config.py` |
 | CLI (dry-run default, --apply to write) | `bucketsync/cli.py` |
 
 ### Verification status
 
 Live-tested against TCP OBS (eu-de): diff, dry-run, apply (copy), delete
-propagation, checkpoint resume, and the delete-cap abort all confirmed on a
+propagation, re-run resume, and the delete-cap abort all confirmed on a
 throwaway bucket. The diff and full engine path are covered by offline tests
 (`tests/`). The Azure source adapter is written to the azure-storage-blob 12.x
 API but not yet run against a live Azure account (no Azure credentials in the
@@ -179,3 +179,56 @@ This document is updated as the tool evolves.
 - rclone listing and memory at scale: https://rclone.org/docs/
 - azcopy, S3 as source to Azure only: https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azcopy-s3
 - AWS DataSync Azure Blob to Amazon S3: https://aws.amazon.com/blogs/storage/migrating-azure-blob-storage-to-amazon-s3-using-aws-datasync/
+
+## Source safety model
+
+The source must never be modified: in the primary use case it is the only copy
+of live production data while the mirror runs for weeks.
+
+1. The engine wraps the source adapter in a read-only proxy. Destination-style
+   calls (put, delete) do not exist on it, so no engine bug can mutate the
+   source through the adapter.
+2. The one mutating operation that exists at all, Azure Archive rehydration
+   (a permanent Set-Blob-Tier on the source), runs only when the operator sets
+   `rehydrate = true`. The default is false: archive objects are skipped and
+   reported, and the run continues.
+3. A tripwire test runs a full mirror, deletes included, against a source whose
+   mutating methods raise; it asserts zero such calls happen.
+4. The recommended source credential is a container-scoped SAS with read+list
+   only, which makes source writes impossible at the credential level, below
+   the software.
+5. On the destination side: the delete cap bounds any single run, mismatched
+   source/dest prefixes with deletes enabled are refused at config load, and
+   mirroring a bucket onto itself is refused.
+
+## Resume model (why there is no checkpoint file)
+
+Every successfully copied object appears in the destination listing, so the
+next run's diff excludes it automatically. The diff IS the checkpoint: resume
+after any crash or interrupt is "run it again". A persistent checkpoint file
+would duplicate that at the cost of RAM (about 1 GB at 6.2M objects) and a
+stale-skip hazard (an object deleted and re-created between runs could be
+wrongly skipped). Removing it made the seed-scale memory footprint flat.
+
+## Performance notes (measured, 100k-object test set)
+
+Measured on a 100k-object set with both sides populated (the steady-state
+mirror pass): 74 s wall for both listings plus the diff, peak RSS 165 MB.
+Listing throughput is ~1,300 items/s per side, bounded by the Azure SDK's XML
+parsing, and the two listings overlap, so the pass costs the slower side only.
+Linear extrapolation to 6.2M objects: roughly 80-90 minutes per pass at flat
+memory. Tiny-object copy improved ~2.6x over the pre-optimization baseline
+from the same host (transfer-manager overhead removed); in-region hosts gain
+more, and ~2 MB objects run bandwidth-bound, not overhead-bound.
+
+- Listings of source and destination run concurrently (background prefetch
+  threads feeding the sorted merge), so a pass costs max(listing times), not
+  the sum.
+- Sub-64MB objects (statistically all of the wound-photo workload) go through
+  a single `put_object` call with an in-memory body: no per-object
+  TransferManager, and retries are safe because the body is bytes.
+- The copy and delete phases use bounded-semaphore submission with no
+  mid-stream barrier, so one slow object does not stall the pipeline.
+- Plan files are JSON-lines (keys with tabs/newlines survive) with normal
+  buffering; they are the only disk state and are gitignored (keys can embed
+  patient identifiers).

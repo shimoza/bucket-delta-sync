@@ -15,7 +15,9 @@ container = "mycontainer"
 #   sas_env  -> a container-scoped SAS token, read+list (recommended). See docs/CREDENTIALS.md
 key_env = "SRC_AZURE_ACCOUNT_KEY"
 # sas_env = "SRC_AZURE_SAS"
-# Optional prefix to limit the sync to one path.
+# Optional prefix to limit the sync to one path. With delete = true the source
+# and dest prefixes MUST match, otherwise dest content outside the source's
+# scope would look like orphans and be deleted; the config loader enforces this.
 prefix = ""
 
 [dest]
@@ -42,3 +44,9 @@ max_delete = "1%"
 threads = 16
 # Always preview first. Set to false to actually write.
 dry_run = true
+# Rehydrate Azure Archive-tier source blobs before copying. OFF by default:
+# rehydration is a WRITE to the source (a permanent tier change with billing
+# impact). With false, the tool performs ZERO mutating calls against the
+# source and a read+list credential is sufficient; archive blobs are skipped
+# and reported instead.
+rehydrate = false
